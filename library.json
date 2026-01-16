@@ -1,0 +1,17 @@
+{
+  "name": "hal-midi",
+  "version": "0.1.0",
+  "description": "MIDI HAL drivers for Open Control (libremidi)",
+  "keywords": ["open-control", "midi", "hal", "libremidi"],
+  "license": "MIT",
+  "platforms": ["native"],
+  "dependencies": {
+    "framework": "*"
+  },
+  "build": {
+    "includeDir": "src",
+    "srcFilter": [
+      "+<**/*.cpp>"
+    ]
+  }
+}
