@@ -15,8 +15,8 @@
 #include <string>
 #include <vector>
 
-#include <oc/core/Result.hpp>
-#include <oc/hal/IMidiTransport.hpp>
+#include <oc/types/Result.hpp>
+#include <oc/interface/IMidi.hpp>
 
 namespace libremidi {
 class midi_in;
@@ -58,7 +58,7 @@ struct LibreMidiConfig {
  * 3. Configure your DAW to use this port
  * 4. LibreMidiTransport will connect to matching ports automatically
  */
-class LibreMidiTransport : public hal::IMidiTransport {
+class LibreMidiTransport : public interface::IMidi {
 public:
     static constexpr size_t DEFAULT_MAX_ACTIVE_NOTES = 32;
 
@@ -74,7 +74,7 @@ public:
     LibreMidiTransport(LibreMidiTransport&&) noexcept;
     LibreMidiTransport& operator=(LibreMidiTransport&&) noexcept;
 
-    core::Result<void> init() override;
+    oc::Result<void> init() override;
     void update() override;
 
     void sendCC(uint8_t channel, uint8_t cc, uint8_t value) override;

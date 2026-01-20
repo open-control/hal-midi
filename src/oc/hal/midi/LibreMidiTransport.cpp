@@ -18,9 +18,9 @@ LibreMidiTransport::~LibreMidiTransport() = default;
 LibreMidiTransport::LibreMidiTransport(LibreMidiTransport&&) noexcept = default;
 LibreMidiTransport& LibreMidiTransport::operator=(LibreMidiTransport&&) noexcept = default;
 
-core::Result<void> LibreMidiTransport::init() {
+oc::Result<void> LibreMidiTransport::init() {
     if (initialized_) {
-        return core::Result<void>::ok();
+        return oc::Result<void>::ok();
     }
 
     // Initialize active notes tracking
@@ -120,10 +120,10 @@ core::Result<void> LibreMidiTransport::init() {
 #endif
     } catch (const std::exception& e) {
         OC_LOG_ERROR("MIDI: Init failed: {}", e.what());
-        return core::Result<void>::err(core::ErrorCode::HARDWARE_INIT_FAILED);
+        return oc::Result<void>::err(oc::ErrorCode::HARDWARE_INIT_FAILED);
     }
 
-    return core::Result<void>::ok();
+    return oc::Result<void>::ok();
 }
 
 void LibreMidiTransport::update() {
