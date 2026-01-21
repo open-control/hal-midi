@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#include <oc/types/Result.hpp>
+#include <oc/type/Result.hpp>
 #include <oc/interface/IMidi.hpp>
 
 namespace libremidi {
@@ -74,7 +74,7 @@ public:
     LibreMidiTransport(LibreMidiTransport&&) noexcept;
     LibreMidiTransport& operator=(LibreMidiTransport&&) noexcept;
 
-    oc::Result<void> init() override;
+    oc::type::Result<void> init() override;
     void update() override;
 
     void sendCC(uint8_t channel, uint8_t cc, uint8_t value) override;
