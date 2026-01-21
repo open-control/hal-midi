@@ -59,13 +59,8 @@ oc::type::Result<void> LibreMidiTransport::init() {
         OC_LOG_INFO("MIDI: WebMIDI observer started (waiting for ports)");
 #else
         // ═══════════════════════════════════════════════════════════════
-        // Desktop: Synchronous port enumeration
+        // Desktop: Virtual ports (macOS) or existing port enumeration
         // ═══════════════════════════════════════════════════════════════
-        libremidi::observer obs;
-        auto in_ports = obs.get_input_ports();
-        auto out_ports = obs.get_output_ports();
-
-        OC_LOG_INFO("MIDI: Found {} input ports, {} output ports", in_ports.size(), out_ports.size());
 
         // Create MIDI input with callback
         libremidi::input_configuration in_config;
@@ -73,50 +68,82 @@ oc::type::Result<void> LibreMidiTransport::init() {
             processMessage(msg.bytes.data(), msg.bytes.size());
         };
 
-        midi_in_ = std::make_unique<libremidi::midi_in>(in_config);
+#if defined(__APPLE__)
+        if (config_.useVirtualPorts) {
+            // macOS: CoreMIDI virtual ports (native support)
+            midi_in_ = std::make_unique<libremidi::midi_in>(in_config);
+            midi_out_ = std::make_unique<libremidi::midi_out>();
 
-        // Create MIDI output
-        midi_out_ = std::make_unique<libremidi::midi_out>();
-
-        // Find matching input port
-        bool in_opened = false;
-        for (size_t i = 0; i < in_ports.size(); ++i) {
-            std::string name = in_ports[i].display_name;
-            OC_LOG_DEBUG("MIDI IN [{}]: {}", i, name.c_str());
-
-            if (config_.inputPortPattern.empty() ||
-                name.find(config_.inputPortPattern) != std::string::npos) {
-                midi_in_->open_port(in_ports[i]);
-                OC_LOG_INFO("MIDI: Opened input port: {}", name.c_str());
-                in_opened = true;
-                break;
+            if (!config_.inputPortName.empty()) {
+                midi_in_->open_virtual_port(config_.inputPortName);
+                OC_LOG_INFO("MIDI: Created virtual input port: {}", config_.inputPortName.c_str());
             }
-        }
-
-        // Find matching output port
-        bool out_opened = false;
-        for (size_t i = 0; i < out_ports.size(); ++i) {
-            std::string name = out_ports[i].display_name;
-            OC_LOG_DEBUG("MIDI OUT [{}]: {}", i, name.c_str());
-
-            if (config_.outputPortPattern.empty() ||
-                name.find(config_.outputPortPattern) != std::string::npos) {
-                midi_out_->open_port(out_ports[i]);
-                OC_LOG_INFO("MIDI: Opened output port: {}", name.c_str());
-                out_opened = true;
-                break;
+            if (!config_.outputPortName.empty()) {
+                midi_out_->open_virtual_port(config_.outputPortName);
+                OC_LOG_INFO("MIDI: Created virtual output port: {}", config_.outputPortName.c_str());
             }
-        }
+            initialized_ = true;
+            OC_LOG_INFO("MIDI: Virtual ports ready");
+        } else
+#endif
+        {
+            // Connect to existing ports
+            // Linux: VirMIDI kernel ports (via snd-virmidi module)
+            // Windows: loopMIDI virtual ports
+            midi_in_ = std::make_unique<libremidi::midi_in>(in_config);
+            midi_out_ = std::make_unique<libremidi::midi_out>();
 
-        if (!in_opened) {
-            OC_LOG_WARN("MIDI: No input port opened");
-        }
-        if (!out_opened) {
-            OC_LOG_WARN("MIDI: No output port opened");
-        }
+            // Configure observer to see both hardware and virtual ports
+            libremidi::observer_configuration obs_config;
+            obs_config.track_hardware = true;
+            obs_config.track_virtual = true;  // Needed for VirMIDI/loopMIDI
+            libremidi::observer obs{obs_config};
 
-        initialized_ = true;
-        OC_LOG_INFO("MIDI: Initialized successfully");
+            auto in_ports = obs.get_input_ports();
+            auto out_ports = obs.get_output_ports();
+
+            OC_LOG_INFO("MIDI: Found {} input ports, {} output ports", in_ports.size(), out_ports.size());
+
+            // Find matching input port
+            bool in_opened = false;
+            for (size_t i = 0; i < in_ports.size(); ++i) {
+                std::string name = in_ports[i].display_name;
+                OC_LOG_DEBUG("MIDI IN [{}]: {}", i, name.c_str());
+
+                if (config_.inputPortName.empty() ||
+                    name.find(config_.inputPortName) != std::string::npos) {
+                    midi_in_->open_port(in_ports[i]);
+                    OC_LOG_INFO("MIDI: Opened input port: {}", name.c_str());
+                    in_opened = true;
+                    break;
+                }
+            }
+
+            // Find matching output port
+            bool out_opened = false;
+            for (size_t i = 0; i < out_ports.size(); ++i) {
+                std::string name = out_ports[i].display_name;
+                OC_LOG_DEBUG("MIDI OUT [{}]: {}", i, name.c_str());
+
+                if (config_.outputPortName.empty() ||
+                    name.find(config_.outputPortName) != std::string::npos) {
+                    midi_out_->open_port(out_ports[i]);
+                    OC_LOG_INFO("MIDI: Opened output port: {}", name.c_str());
+                    out_opened = true;
+                    break;
+                }
+            }
+
+            if (!in_opened) {
+                OC_LOG_WARN("MIDI: No input port opened (pattern: {})", config_.inputPortName.c_str());
+            }
+            if (!out_opened) {
+                OC_LOG_WARN("MIDI: No output port opened (pattern: {})", config_.outputPortName.c_str());
+            }
+
+            initialized_ = true;
+            OC_LOG_INFO("MIDI: Initialized successfully");
+        }
 #endif
     } catch (const std::exception& e) {
         OC_LOG_ERROR("MIDI: Init failed: {}", e.what());
@@ -304,8 +331,8 @@ void LibreMidiTransport::onInputAdded(const libremidi::input_port& port) {
     }
     
     // Check pattern match
-    if (!config_.inputPortPattern.empty() &&
-        name.find(config_.inputPortPattern) == std::string::npos) {
+    if (!config_.inputPortName.empty() &&
+        name.find(config_.inputPortName) == std::string::npos) {
         return;
     }
     
@@ -337,8 +364,8 @@ void LibreMidiTransport::onOutputAdded(const libremidi::output_port& port) {
     }
     
     // Check pattern match
-    if (!config_.outputPortPattern.empty() &&
-        name.find(config_.outputPortPattern) == std::string::npos) {
+    if (!config_.outputPortName.empty() &&
+        name.find(config_.outputPortName) == std::string::npos) {
         return;
     }
     

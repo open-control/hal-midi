@@ -5,7 +5,9 @@
  * @brief MIDI transport using libremidi (Desktop + WebMIDI)
  *
  * Provides real MIDI I/O for desktop and browser platforms.
- * - Desktop: Synchronous port enumeration (WinMM, ALSA, CoreMIDI)
+ * - Linux: ALSA sequencer, connects to VirMIDI kernel ports (snd-virmidi)
+ * - macOS: CoreMIDI virtual ports (native support)
+ * - Windows: WinMM, connects to loopMIDI virtual ports
  * - WebMIDI: Asynchronous port discovery via callbacks (Emscripten)
  */
 
@@ -30,19 +32,33 @@ namespace oc::hal::midi {
 
 /**
  * @brief Configuration for LibreMidiTransport
+ *
+ * Port naming convention: "MIDI Studio <IN/OUT> [bitwig:<type>]"
+ * Examples:
+ *   - "MIDI Studio IN [bitwig:native]"  / "MIDI Studio OUT [bitwig:native]"
+ *   - "MIDI Studio IN [bitwig:wasm]"    / "MIDI Studio OUT [bitwig:wasm]"
+ *
+ * On Linux/macOS: Virtual ports are created with these exact names
+ * On Windows: User must create loopMIDI ports with these exact names
  */
 struct LibreMidiConfig {
-    /// Application name used for MIDI port naming (default: "OpenControl")
+    /// Application name (for logging)
     std::string appName = "OpenControl";
-    
+
     /// Maximum number of active notes to track for allNotesOff()
     size_t maxActiveNotes = 32;
-    
-    /// Input port name pattern to look for (empty = first available)
-    std::string inputPortPattern = "";
-    
-    /// Output port name pattern to look for (empty = first available)
-    std::string outputPortPattern = "";
+
+    /// Input port name - where the app RECEIVES from (Bitwig sends here)
+    /// Used as virtual port name (Linux/macOS) or search pattern (Windows)
+    std::string inputPortName = "";
+
+    /// Output port name - where the app SENDS to (Bitwig receives here)
+    /// Used as virtual port name (Linux/macOS) or search pattern (Windows)
+    std::string outputPortName = "";
+
+    /// Create virtual MIDI ports (Linux/macOS only)
+    /// If false, searches for existing ports matching inputPortName/outputPortName
+    bool useVirtualPorts = false;
 };
 
 /**
