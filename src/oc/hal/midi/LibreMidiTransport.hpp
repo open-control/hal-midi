@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <memory>
 #include <string>
 #include <vector>
@@ -86,9 +87,9 @@ public:
     LibreMidiTransport(const LibreMidiTransport&) = delete;
     LibreMidiTransport& operator=(const LibreMidiTransport&) = delete;
 
-    // Moveable
-    LibreMidiTransport(LibreMidiTransport&&) noexcept;
-    LibreMidiTransport& operator=(LibreMidiTransport&&) noexcept;
+    // Non-movable (contains std::mutex)
+    LibreMidiTransport(LibreMidiTransport&&) noexcept = delete;
+    LibreMidiTransport& operator=(LibreMidiTransport&&) noexcept = delete;
 
     oc::type::Result<void> init() override;
     void update() override;
@@ -134,6 +135,13 @@ private:
 
     std::vector<ActiveNote> active_notes_;
     bool initialized_ = false;
+
+    // libremidi backends may invoke callbacks on a background thread.
+    // We buffer incoming messages and process them in update() to keep the
+    // rest of the app single-threaded.
+    std::mutex pending_mutex_;
+    std::vector<std::vector<uint8_t>> pending_messages_;
+    size_t max_pending_messages_ = 1024;
 };
 
 }  // namespace oc::hal::midi

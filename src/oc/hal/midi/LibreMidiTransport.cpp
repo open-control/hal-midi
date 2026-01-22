@@ -15,9 +15,6 @@ LibreMidiTransport::LibreMidiTransport(const LibreMidiConfig& config)
 
 LibreMidiTransport::~LibreMidiTransport() = default;
 
-LibreMidiTransport::LibreMidiTransport(LibreMidiTransport&&) noexcept = default;
-LibreMidiTransport& LibreMidiTransport::operator=(LibreMidiTransport&&) noexcept = default;
-
 oc::type::Result<void> LibreMidiTransport::init() {
     if (initialized_) {
         return oc::type::Result<void>::ok();
@@ -62,10 +59,17 @@ oc::type::Result<void> LibreMidiTransport::init() {
         // Desktop: Virtual ports (macOS) or existing port enumeration
         // ═══════════════════════════════════════════════════════════════
 
-        // Create MIDI input with callback
+        // Create MIDI input with callback.
+        // Note: callbacks may come from a background thread depending on backend.
         libremidi::input_configuration in_config;
-        in_config.on_message = [this](const libremidi::message& msg) {
-            processMessage(msg.bytes.data(), msg.bytes.size());
+        in_config.on_message = [this](libremidi::message&& msg) {
+            if (msg.bytes.empty()) return;
+            std::lock_guard<std::mutex> lock(pending_mutex_);
+            if (pending_messages_.size() >= max_pending_messages_) {
+                // Drop newest to keep bounded memory.
+                return;
+            }
+            pending_messages_.push_back(std::move(msg.bytes));
         };
 
 #if defined(__APPLE__)
@@ -154,14 +158,23 @@ oc::type::Result<void> LibreMidiTransport::init() {
 }
 
 void LibreMidiTransport::update() {
-    // libremidi uses callbacks, no polling needed
+    // Process buffered MIDI messages on the main thread.
+    std::vector<std::vector<uint8_t>> local;
+    {
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        local.swap(pending_messages_);
+    }
+
+    for (auto& bytes : local) {
+        processMessage(bytes.data(), bytes.size());
+    }
 }
 
 void LibreMidiTransport::processMessage(const uint8_t* data, size_t length) {
     if (length == 0) return;
 
     // DEBUG: Log incoming MIDI
-    OC_LOG_INFO("MIDI RX: [{:02X}] len={}", data[0], length);
+    OC_LOG_INFO("MIDI RX: status={} len={}", data[0], length);
 
     uint8_t status = data[0];
     uint8_t type = status & 0xF0;
@@ -338,8 +351,13 @@ void LibreMidiTransport::onInputAdded(const libremidi::input_port& port) {
     
     // Create and open input
     libremidi::input_configuration in_config;
-    in_config.on_message = [this](const libremidi::message& msg) {
-        processMessage(msg.bytes.data(), msg.bytes.size());
+    in_config.on_message = [this](libremidi::message&& msg) {
+        if (msg.bytes.empty()) return;
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        if (pending_messages_.size() >= max_pending_messages_) {
+            return;
+        }
+        pending_messages_.push_back(std::move(msg.bytes));
     };
     
 #ifdef __EMSCRIPTEN__
