@@ -173,8 +173,8 @@ void LibreMidiTransport::update() {
 void LibreMidiTransport::processMessage(const uint8_t* data, size_t length) {
     if (length == 0) return;
 
-    // DEBUG: Log incoming MIDI
-    OC_LOG_INFO("MIDI RX: status={} len={}", data[0], length);
+    // Debug: log incoming MIDI (can be very chatty)
+    OC_LOG_DEBUG("MIDI RX: status={} len={}", data[0], length);
 
     uint8_t status = data[0];
     uint8_t type = status & 0xF0;
