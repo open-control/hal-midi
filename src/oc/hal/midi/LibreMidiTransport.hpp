@@ -101,12 +101,20 @@ public:
     void sendProgramChange(uint8_t channel, uint8_t program) override;
     void sendPitchBend(uint8_t channel, int16_t value) override;
     void sendChannelPressure(uint8_t channel, uint8_t pressure) override;
+    void sendClock() override;
+    void sendStart() override;
+    void sendStop() override;
+    void sendContinue() override;
     void allNotesOff() override;
 
     void setOnCC(CCCallback cb) override;
     void setOnNoteOn(NoteCallback cb) override;
     void setOnNoteOff(NoteCallback cb) override;
     void setOnSysEx(SysExCallback cb) override;
+    void setOnClock(ClockCallback cb) override;
+    void setOnStart(RealtimeCallback cb) override;
+    void setOnStop(RealtimeCallback cb) override;
+    void setOnContinue(RealtimeCallback cb) override;
 
 private:
     struct ActiveNote {
@@ -117,7 +125,7 @@ private:
 
     void markNoteActive(uint8_t channel, uint8_t note);
     void markNoteInactive(uint8_t channel, uint8_t note);
-    void processMessage(const uint8_t* data, size_t length);
+    void processMessage(const uint8_t* data, size_t length, uint64_t timestampUs);
     
     // WebMIDI async port handling
     void onInputAdded(const libremidi::input_port& port);
@@ -132,6 +140,10 @@ private:
     NoteCallback on_note_on_;
     NoteCallback on_note_off_;
     SysExCallback on_sysex_;
+    ClockCallback on_clock_;
+    RealtimeCallback on_start_;
+    RealtimeCallback on_stop_;
+    RealtimeCallback on_continue_;
 
     std::vector<ActiveNote> active_notes_;
     bool initialized_ = false;
@@ -140,7 +152,11 @@ private:
     // We buffer incoming messages and process them in update() to keep the
     // rest of the app single-threaded.
     std::mutex pending_mutex_;
-    std::vector<std::vector<uint8_t>> pending_messages_;
+    struct PendingMessage {
+        std::vector<uint8_t> bytes;
+        uint64_t timestampUs = 0;
+    };
+    std::vector<PendingMessage> pending_messages_;
     size_t max_pending_messages_ = 1024;
 };
 

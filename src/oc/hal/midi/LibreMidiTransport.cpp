@@ -1,5 +1,6 @@
 #include "LibreMidiTransport.hpp"
 
+#include <chrono>
 #include <libremidi/libremidi.hpp>
 #ifdef __EMSCRIPTEN__
 #include <libremidi/configurations.hpp>
@@ -7,6 +8,16 @@
 #include <oc/log/Log.hpp>
 
 namespace oc::hal::midi {
+
+namespace {
+
+uint64_t nowSteadyUs() {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(now).count());
+}
+
+}  // namespace
 
 LibreMidiTransport::LibreMidiTransport() : LibreMidiTransport(LibreMidiConfig{}) {}
 
@@ -64,12 +75,17 @@ oc::type::Result<void> LibreMidiTransport::init() {
         libremidi::input_configuration in_config;
         in_config.on_message = [this](libremidi::message&& msg) {
             if (msg.bytes.empty()) return;
+
+            PendingMessage pending{};
+            pending.timestampUs = nowSteadyUs();
+            pending.bytes = std::move(msg.bytes);
+
             std::lock_guard<std::mutex> lock(pending_mutex_);
             if (pending_messages_.size() >= max_pending_messages_) {
                 // Drop newest to keep bounded memory.
                 return;
             }
-            pending_messages_.push_back(std::move(msg.bytes));
+            pending_messages_.push_back(std::move(pending));
         };
 
 #if defined(__APPLE__)
@@ -159,24 +175,43 @@ oc::type::Result<void> LibreMidiTransport::init() {
 
 void LibreMidiTransport::update() {
     // Process buffered MIDI messages on the main thread.
-    std::vector<std::vector<uint8_t>> local;
+    std::vector<PendingMessage> local;
     {
         std::lock_guard<std::mutex> lock(pending_mutex_);
         local.swap(pending_messages_);
     }
 
-    for (auto& bytes : local) {
-        processMessage(bytes.data(), bytes.size());
+    for (auto& pending : local) {
+        processMessage(pending.bytes.data(), pending.bytes.size(), pending.timestampUs);
     }
 }
 
-void LibreMidiTransport::processMessage(const uint8_t* data, size_t length) {
+void LibreMidiTransport::processMessage(const uint8_t* data, size_t length, uint64_t timestampUs) {
     if (length == 0) return;
 
     // Debug: log incoming MIDI (can be very chatty)
     OC_LOG_DEBUG("MIDI RX: status={} len={}", data[0], length);
 
     uint8_t status = data[0];
+
+    // Realtime single-byte messages (may appear interleaved at any time)
+    switch (status) {
+        case 0xF8:
+            if (on_clock_) on_clock_(timestampUs);
+            return;
+        case 0xFA:
+            if (on_start_) on_start_();
+            return;
+        case 0xFB:
+            if (on_continue_) on_continue_();
+            return;
+        case 0xFC:
+            if (on_stop_) on_stop_();
+            return;
+        default:
+            break;
+    }
+
     uint8_t type = status & 0xF0;
     uint8_t channel = status & 0x0F;
 
@@ -204,7 +239,7 @@ void LibreMidiTransport::processMessage(const uint8_t* data, size_t length) {
             break;
 
         case 0xF0: // System Exclusive
-            if (on_sysex_) {
+            if (status == 0xF0 && on_sysex_) {
                 on_sysex_(data, length);
             }
             break;
@@ -316,6 +351,38 @@ void LibreMidiTransport::sendChannelPressure(uint8_t channel, uint8_t pressure) 
     midi_out_->send_message(msg);
 }
 
+void LibreMidiTransport::sendClock() {
+    if (!midi_out_ || !midi_out_->is_port_connected()) return;
+
+    libremidi::message msg;
+    msg.bytes = {0xF8};
+    midi_out_->send_message(msg);
+}
+
+void LibreMidiTransport::sendStart() {
+    if (!midi_out_ || !midi_out_->is_port_connected()) return;
+
+    libremidi::message msg;
+    msg.bytes = {0xFA};
+    midi_out_->send_message(msg);
+}
+
+void LibreMidiTransport::sendStop() {
+    if (!midi_out_ || !midi_out_->is_port_connected()) return;
+
+    libremidi::message msg;
+    msg.bytes = {0xFC};
+    midi_out_->send_message(msg);
+}
+
+void LibreMidiTransport::sendContinue() {
+    if (!midi_out_ || !midi_out_->is_port_connected()) return;
+
+    libremidi::message msg;
+    msg.bytes = {0xFB};
+    midi_out_->send_message(msg);
+}
+
 void LibreMidiTransport::allNotesOff() {
     for (auto& slot : active_notes_) {
         if (slot.active) {
@@ -329,6 +396,10 @@ void LibreMidiTransport::setOnCC(CCCallback cb) { on_cc_ = std::move(cb); }
 void LibreMidiTransport::setOnNoteOn(NoteCallback cb) { on_note_on_ = std::move(cb); }
 void LibreMidiTransport::setOnNoteOff(NoteCallback cb) { on_note_off_ = std::move(cb); }
 void LibreMidiTransport::setOnSysEx(SysExCallback cb) { on_sysex_ = std::move(cb); }
+void LibreMidiTransport::setOnClock(ClockCallback cb) { on_clock_ = std::move(cb); }
+void LibreMidiTransport::setOnStart(RealtimeCallback cb) { on_start_ = std::move(cb); }
+void LibreMidiTransport::setOnStop(RealtimeCallback cb) { on_stop_ = std::move(cb); }
+void LibreMidiTransport::setOnContinue(RealtimeCallback cb) { on_continue_ = std::move(cb); }
 
 // =============================================================================
 // WebMIDI async port handling
@@ -353,11 +424,16 @@ void LibreMidiTransport::onInputAdded(const libremidi::input_port& port) {
     libremidi::input_configuration in_config;
     in_config.on_message = [this](libremidi::message&& msg) {
         if (msg.bytes.empty()) return;
+
+        PendingMessage pending{};
+        pending.timestampUs = nowSteadyUs();
+        pending.bytes = std::move(msg.bytes);
+
         std::lock_guard<std::mutex> lock(pending_mutex_);
         if (pending_messages_.size() >= max_pending_messages_) {
             return;
         }
-        pending_messages_.push_back(std::move(msg.bytes));
+        pending_messages_.push_back(std::move(pending));
     };
     
 #ifdef __EMSCRIPTEN__

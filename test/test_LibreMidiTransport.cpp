@@ -35,6 +35,10 @@ public:
     std::vector<ReceivedNote> noteOnMessages;
     std::vector<ReceivedNote> noteOffMessages;
     std::vector<std::vector<uint8_t>> sysexMessages;
+    int clockCount = 0;
+    int startCount = 0;
+    int stopCount = 0;
+    int continueCount = 0;
 
     void onCC(uint8_t ch, uint8_t cc, uint8_t val) {
         ccMessages.push_back({ch, cc, val});
@@ -52,11 +56,23 @@ public:
         sysexMessages.push_back(std::vector<uint8_t>(data, data + len));
     }
 
+    void onClock() { clockCount++; }
+
+    void onStart() { startCount++; }
+
+    void onStop() { stopCount++; }
+
+    void onContinue() { continueCount++; }
+
     void clear() {
         ccMessages.clear();
         noteOnMessages.clear();
         noteOffMessages.clear();
         sysexMessages.clear();
+        clockCount = 0;
+        startCount = 0;
+        stopCount = 0;
+        continueCount = 0;
     }
 };
 
@@ -65,6 +81,24 @@ void processTestMessage(const uint8_t* data, size_t length, MockMidiReceiver& re
     if (length == 0) return;
 
     uint8_t status = data[0];
+
+    switch (status) {
+        case 0xF8:
+            receiver.onClock();
+            return;
+        case 0xFA:
+            receiver.onStart();
+            return;
+        case 0xFB:
+            receiver.onContinue();
+            return;
+        case 0xFC:
+            receiver.onStop();
+            return;
+        default:
+            break;
+    }
+
     uint8_t type = status & 0xF0;
     uint8_t channel = status & 0x0F;
 
@@ -219,6 +253,62 @@ void test_ShortMessage() {
     std::cout << "[PASS] test_ShortMessage\n";
 }
 
+void test_RealtimeClock() {
+    MockMidiReceiver receiver;
+
+    uint8_t msg[] = {0xF8};
+    processTestMessage(msg, 1, receiver);
+
+    assert(receiver.clockCount == 1);
+    assert(receiver.startCount == 0);
+    assert(receiver.stopCount == 0);
+    assert(receiver.continueCount == 0);
+
+    std::cout << "[PASS] test_RealtimeClock\n";
+}
+
+void test_RealtimeStart() {
+    MockMidiReceiver receiver;
+
+    uint8_t msg[] = {0xFA};
+    processTestMessage(msg, 1, receiver);
+
+    assert(receiver.startCount == 1);
+    assert(receiver.clockCount == 0);
+    assert(receiver.stopCount == 0);
+    assert(receiver.continueCount == 0);
+
+    std::cout << "[PASS] test_RealtimeStart\n";
+}
+
+void test_RealtimeContinue() {
+    MockMidiReceiver receiver;
+
+    uint8_t msg[] = {0xFB};
+    processTestMessage(msg, 1, receiver);
+
+    assert(receiver.continueCount == 1);
+    assert(receiver.clockCount == 0);
+    assert(receiver.startCount == 0);
+    assert(receiver.stopCount == 0);
+
+    std::cout << "[PASS] test_RealtimeContinue\n";
+}
+
+void test_RealtimeStop() {
+    MockMidiReceiver receiver;
+
+    uint8_t msg[] = {0xFC};
+    processTestMessage(msg, 1, receiver);
+
+    assert(receiver.stopCount == 1);
+    assert(receiver.clockCount == 0);
+    assert(receiver.startCount == 0);
+    assert(receiver.continueCount == 0);
+
+    std::cout << "[PASS] test_RealtimeStop\n";
+}
+
 } // namespace test
 
 int main() {
@@ -234,6 +324,10 @@ int main() {
     test::test_SysEx();
     test::test_EmptyMessage();
     test::test_ShortMessage();
+    test::test_RealtimeClock();
+    test::test_RealtimeStart();
+    test::test_RealtimeContinue();
+    test::test_RealtimeStop();
 
     std::cout << "\n═══════════════════════════════════════════════════════════════════\n";
     std::cout << "All tests passed!\n";
