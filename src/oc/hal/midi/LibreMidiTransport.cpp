@@ -73,6 +73,9 @@ oc::type::Result<void> LibreMidiTransport::init() {
         // Create MIDI input with callback.
         // Note: callbacks may come from a background thread depending on backend.
         libremidi::input_configuration in_config;
+        // libremidi ignores timing / realtime messages by default (ignore_timing=true).
+        // We need realtime clock / transport for external sync.
+        in_config.ignore_timing = false;
         in_config.on_message = [this](libremidi::message&& msg) {
             if (msg.bytes.empty()) return;
 
@@ -422,6 +425,8 @@ void LibreMidiTransport::onInputAdded(const libremidi::input_port& port) {
     
     // Create and open input
     libremidi::input_configuration in_config;
+    // Keep timing messages for external clock / transport sync.
+    in_config.ignore_timing = false;
     in_config.on_message = [this](libremidi::message&& msg) {
         if (msg.bytes.empty()) return;
 
